@@ -1,0 +1,1567 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs, onSnapshot, query, where, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { ChevronDown, ChevronUp, Home, PlusCircle, Car, Briefcase, Shield, FileText, BookOpen, Settings, UserCircle, CalendarDays, DollarSign, TrendingUp, AlertTriangle, Edit3, Trash2, Save, XCircle, LogOut, Search, Filter, Download, Maximize, Minimize, ListChecks, Target, Clock, Percent, Building, LandPlot, Wrench, Receipt, Fuel, MapPin, Brain, Lightbulb, FileSpreadsheet } from 'lucide-react';
+
+// --- Color Palette ---
+const PALETTE = {
+    mainBg: '#0B0F1A',
+    cardBg: '#131A2B',
+    accentPurple: '#6C5DD3',
+    textPrimary: '#F4F4F5',
+    textSecondary: '#D1D1D6', // A slightly dimmer white for less emphasis
+    textMuted: '#A0AEC0',    // For even less emphasis, like placeholders or minor details
+    divider: '#2F3548',
+    chartGreen: '#3DD598',
+    chartRed: '#FF6B6B',
+    sidebarHover: '#1E293B', // A slightly lighter shade for sidebar hover
+    buttonSecondaryBg: '#2F3548',
+    buttonSecondaryHoverBg: '#3E4A60',
+};
+
+// --- Firebase Configuration ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+    apiKey: "YOUR_API_KEY", 
+    authDomain: "YOUR_AUTH_DOMAIN",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_STORAGE_BUCKET",
+    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+    appId: "YOUR_APP_ID"
+};
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Initialize Firebase ---
+let app;
+let auth;
+let db;
+
+try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+} catch (error) {
+    console.error("Error initializing Firebase:", error);
+}
+
+
+// --- Helper Functions ---
+const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+};
+
+const formatDate = (date) => {
+    if (!date) return 'N/A';
+    try {
+        if (date.toDate) {
+            return date.toDate().toLocaleDateString('en-US');
+        }
+        const parsedDate = new Date(date);
+        if (!isNaN(parsedDate.getTime())) {
+            return parsedDate.toLocaleDateString('en-US');
+        }
+        return 'Invalid Date';
+    } catch (error) {
+        console.error("Error formatting date:", date, error);
+        return 'Error Date';
+    }
+};
+
+
+// --- Reusable Components ---
+const Card = ({ title, value, icon, subValue, color = PALETTE.accentPurple, bgColor = PALETTE.cardBg }) => (
+    <div className={`p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300`} style={{ backgroundColor: bgColor }}>
+        <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold" style={{ color: PALETTE.textSecondary }}>{title}</h3>
+            {React.cloneElement(icon, { className: `w-8 h-8`, style: { color: color } })}
+        </div>
+        <p className={`text-3xl font-bold`} style={{color: color}}>{value}</p>
+        {subValue && <p className="text-sm mt-1" style={{ color: PALETTE.textMuted }}>{subValue}</p>}
+    </div>
+);
+
+const Modal = ({ isOpen, onClose, title, children }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="rounded-lg shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" style={{ backgroundColor: PALETTE.cardBg }}>
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-semibold" style={{ color: PALETTE.textPrimary }}>{title}</h2>
+                    <button onClick={onClose} className="hover:text-gray-400" style={{ color: PALETTE.textMuted }}>
+                        <XCircle size={24} />
+                    </button>
+                </div>
+                {children}
+            </div>
+        </div>
+    );
+};
+
+const Button = ({ onClick, children, variant = 'primary', className = '', iconLeft, iconRight, type = 'button', disabled = false }) => {
+    const baseStyle = "px-4 py-2 rounded-lg font-semibold transition-all duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-opacity-50 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed";
+    
+    let variantStyle = '';
+    switch(variant) {
+        case 'primary':
+            variantStyle = `text-white focus:ring-[${PALETTE.accentPurple}]`;
+            break;
+        case 'secondary':
+            variantStyle = `focus:ring-[${PALETTE.buttonSecondaryHoverBg}]`;
+            break;
+        case 'danger':
+            variantStyle = `text-white focus:ring-[${PALETTE.chartRed}]`;
+            break;
+        case 'outline':
+            variantStyle = `border focus:ring-[${PALETTE.accentPurple}]`;
+            break;
+        case 'ghost':
+            variantStyle = `focus:ring-[${PALETTE.accentPurple}]`;
+            break;
+        default:
+            variantStyle = `text-white focus:ring-[${PALETTE.accentPurple}]`;
+    }
+
+    const getVariantColors = () => {
+        switch(variant) {
+            case 'primary': return { backgroundColor: PALETTE.accentPurple, color: PALETTE.textPrimary, hoverBackgroundColor: '#5A4BAD' }; // Darker purple
+            case 'secondary': return { backgroundColor: PALETTE.buttonSecondaryBg, color: PALETTE.textPrimary, hoverBackgroundColor: PALETTE.buttonSecondaryHoverBg };
+            case 'danger': return { backgroundColor: PALETTE.chartRed, color: PALETTE.textPrimary, hoverBackgroundColor: '#D95A5A' }; // Darker red
+            case 'outline': return { backgroundColor: 'transparent', color: PALETTE.accentPurple, borderColor: PALETTE.accentPurple, hoverBackgroundColor: 'rgba(108, 93, 211, 0.1)'};
+            case 'ghost': return { backgroundColor: 'transparent', color: PALETTE.accentPurple, hoverBackgroundColor: 'rgba(108, 93, 211, 0.1)'};
+            default: return { backgroundColor: PALETTE.accentPurple, color: PALETTE.textPrimary, hoverBackgroundColor: '#5A4BAD' };
+        }
+    };
+    
+    const [isHovered, setIsHovered] = useState(false);
+    const colors = getVariantColors();
+    const currentBgColor = disabled ? (variant === 'outline' || variant === 'ghost' ? 'transparent' : colors.backgroundColor) : (isHovered ? colors.hoverBackgroundColor : colors.backgroundColor);
+
+
+    return (
+        <button 
+            type={type} 
+            onClick={onClick} 
+            className={`${baseStyle} ${variantStyle} ${className}`} 
+            disabled={disabled}
+            style={{
+                backgroundColor: currentBgColor,
+                color: colors.color,
+                borderColor: variant === 'outline' ? colors.borderColor : 'transparent',
+            }}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+        >
+            {iconLeft && React.cloneElement(iconLeft, { className: "mr-2 w-5 h-5" })}
+            {children}
+            {iconRight && React.cloneElement(iconRight, { className: "ml-2 w-5 h-5" })}
+        </button>
+    );
+};
+
+const Input = ({ label, id, type = 'text', value, onChange, placeholder, required = false, className = '', error }) => (
+    <div className={`mb-4 ${className}`}>
+        <label htmlFor={id} className="block text-sm font-medium mb-1" style={{ color: PALETTE.textSecondary }}>{label}{required && <span style={{color: PALETTE.chartRed}}>*</span>}</label>
+        <input
+            type={type}
+            id={id}
+            name={id}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            required={required}
+            className={`w-full px-3 py-2 rounded-md shadow-sm focus:outline-none sm:text-sm placeholder-[${PALETTE.textMuted}]`}
+            style={{ 
+                backgroundColor: PALETTE.cardBg, 
+                border: `1px solid ${error ? PALETTE.chartRed : PALETTE.divider}`,
+                color: PALETTE.textPrimary,
+                '--tw-ring-color': PALETTE.accentPurple, /* For Tailwind focus ring */
+                borderColor: error ? PALETTE.chartRed : PALETTE.divider,
+            }}
+        />
+        {error && <p className="mt-1 text-xs" style={{color: PALETTE.chartRed}}>{error}</p>}
+    </div>
+);
+
+const Select = ({ label, id, value, onChange, options, required = false, className = '', error }) => (
+    <div className={`mb-4 ${className}`}>
+        <label htmlFor={id} className="block text-sm font-medium mb-1" style={{ color: PALETTE.textSecondary }}>{label}{required && <span style={{color: PALETTE.chartRed}}>*</span>}</label>
+        <select
+            id={id}
+            name={id}
+            value={value}
+            onChange={onChange}
+            required={required}
+            className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none sm:text-sm`}
+            style={{ 
+                backgroundColor: PALETTE.cardBg, 
+                border: `1px solid ${error ? PALETTE.chartRed : PALETTE.divider}`,
+                color: PALETTE.textPrimary,
+                '--tw-ring-color': PALETTE.accentPurple,
+                borderColor: error ? PALETTE.chartRed : PALETTE.divider,
+            }}
+        >
+            <option value="" style={{color: PALETTE.textMuted}}>Select {label.toLowerCase()}</option>
+            {options.map(opt => (
+                <option key={opt.value} value={opt.value} style={{ backgroundColor: PALETTE.cardBg, color: PALETTE.textPrimary }}>{opt.label}</option>
+            ))}
+        </select>
+        {error && <p className="mt-1 text-xs" style={{color: PALETTE.chartRed}}>{error}</p>}
+    </div>
+);
+
+const Textarea = ({ label, id, value, onChange, placeholder, required = false, rows = 3, className = '', error }) => (
+    <div className={`mb-4 ${className}`}>
+        <label htmlFor={id} className="block text-sm font-medium mb-1" style={{ color: PALETTE.textSecondary }}>{label}{required && <span style={{color: PALETTE.chartRed}}>*</span>}</label>
+        <textarea
+            id={id}
+            name={id}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            required={required}
+            rows={rows}
+            className={`w-full px-3 py-2 rounded-md shadow-sm focus:outline-none sm:text-sm placeholder-[${PALETTE.textMuted}]`}
+            style={{ 
+                backgroundColor: PALETTE.cardBg, 
+                border: `1px solid ${error ? PALETTE.chartRed : PALETTE.divider}`,
+                color: PALETTE.textPrimary,
+                '--tw-ring-color': PALETTE.accentPurple,
+                borderColor: error ? PALETTE.chartRed : PALETTE.divider,
+            }}
+        />
+        {error && <p className="mt-1 text-xs" style={{color: PALETTE.chartRed}}>{error}</p>}
+    </div>
+);
+
+const Toggle = ({ label, id, checked, onChange, className = '' }) => (
+    <div className={`flex items-center justify-between mb-4 ${className}`}>
+        <span className="text-sm font-medium" style={{ color: PALETTE.textSecondary }}>{label}</span>
+        <button
+            type="button"
+            onClick={() => onChange(!checked)}
+            className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-opacity-50`}
+            style={{ 
+                backgroundColor: checked ? PALETTE.accentPurple : PALETTE.divider,
+                '--tw-ring-color': PALETTE.accentPurple 
+            }}
+        >
+            <span className={`${checked ? 'translate-x-6' : 'translate-x-1'} inline-block w-4 h-4 transform bg-white rounded-full transition-transform`} />
+        </button>
+    </div>
+);
+
+const LoadingSpinner = ({ size = 'md' }) => {
+    const sizeClasses = {
+        sm: 'w-6 h-6 border-2',
+        md: 'w-10 h-10 border-4',
+        lg: 'w-16 h-16 border-4'
+    };
+    return (
+        <div className="flex justify-center items-center">
+            <div className={`${sizeClasses[size]} border-t-transparent rounded-full animate-spin`} style={{borderColor: PALETTE.accentPurple, borderTopColor: 'transparent'}}></div>
+        </div>
+    );
+};
+
+// --- Page Components ---
+
+// --- Dashboard ---
+const Dashboard = ({ userId, setActivePage, showMessage }) => {
+    const [summaryData, setSummaryData] = useState({
+        totalWriteOffs: 0,
+        bonusDepreciation: 0,
+        vehicleDeduction: 0,
+        homeOfficeOther: 0,
+    });
+    const [monthlyDeductions, setMonthlyDeductions] = useState([]);
+    const [deductionCategories, setDeductionCategories] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    const aggregateData = useCallback(async () => {
+        if (!userId || !db) return;
+        setLoading(true);
+        try {
+            const propertiesSnap = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/properties`));
+            let bonusDep = 0;
+            propertiesSnap.forEach(doc => {
+                const data = doc.data();
+                if (data.useBonusDepreciation && data.calculatedBonusDepreciation) {
+                    bonusDep += parseFloat(data.calculatedBonusDepreciation);
+                }
+            });
+
+            const vehicleSnap = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/vehicleLog`));
+            let vehicleDed = 0;
+            vehicleSnap.forEach(doc => {
+                const data = doc.data();
+                vehicleDed += parseFloat(data.fuelCost || 0) + parseFloat(data.maintenanceCost || 0) + parseFloat(data.insuranceCost || 0);
+                 if (data.isStandardMileage && data.milesBusiness) {
+                    vehicleDed += parseFloat(data.milesBusiness) * 0.67; 
+                }
+            });
+            
+            const officeSnap = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/officeDetails`));
+            let homeOfficeDed = 0;
+            officeSnap.forEach(doc => {
+                const data = doc.data();
+                if (data.isSimplifiedMethod) {
+                    homeOfficeDed += (parseFloat(data.officeSqFt || 0) * 5); 
+                } else {
+                    homeOfficeDed += parseFloat(data.calculatedActualExpense || 200); 
+                }
+            });
+
+            const expensesSnap = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/expenses`));
+            let otherDed = 0;
+            const categories = {};
+            const monthly = Array(12).fill(0).map((_, i) => ({ name: new Date(0, i).toLocaleString('default', { month: 'short' }), deductions: 0 }));
+
+            expensesSnap.forEach(doc => {
+                const data = doc.data();
+                const amount = parseFloat(data.amount || 0);
+                otherDed += amount;
+                if (data.category) {
+                    categories[data.category] = (categories[data.category] || 0) + amount;
+                }
+                if (data.date) {
+                    let expenseDate;
+                    if (data.date.toDate) expenseDate = data.date.toDate();
+                    else expenseDate = new Date(data.date); 
+                    if (!isNaN(expenseDate.getTime())) {
+                         const monthIndex = expenseDate.getMonth();
+                         monthly[monthIndex].deductions += amount;
+                    }
+                }
+            });
+            
+            setSummaryData({
+                totalWriteOffs: bonusDep + vehicleDed + homeOfficeDed + otherDed,
+                bonusDepreciation: bonusDep,
+                vehicleDeduction: vehicleDed,
+                homeOfficeOther: homeOfficeDed + otherDed,
+            });
+            setMonthlyDeductions(monthly);
+            setDeductionCategories(Object.entries(categories).map(([name, value]) => ({ name, value })));
+
+        } catch (error) {
+            console.error("Error aggregating data:", error);
+            showMessage("Error loading dashboard data.", "error");
+        }
+        setLoading(false);
+    }, [userId, showMessage]);
+
+    useEffect(() => {
+        if (userId && db) {
+            aggregateData();
+            const unsubProperties = onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/properties`), aggregateData);
+            const unsubVehicle = onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/vehicleLog`), aggregateData);
+            const unsubOffice = onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/officeDetails`), aggregateData);
+            const unsubExpenses = onSnapshot(collection(db, `artifacts/${appId}/users/${userId}/expenses`), aggregateData);
+            return () => { unsubProperties(); unsubVehicle(); unsubOffice(); unsubExpenses(); };
+        }
+    }, [userId, aggregateData]);
+
+    const DASHBOARD_PIE_COLORS = [PALETTE.accentPurple, PALETTE.chartGreen, '#FFBB28', '#FF8042', '#8884D8', '#82Ca9D']; // Mix of palette and others
+
+    if (loading) {
+        return <div className="flex justify-center items-center h-full"><LoadingSpinner size="lg" /></div>;
+    }
+
+    return (
+        <div className="p-6 space-y-6">
+            <h1 className="text-3xl font-bold" style={{ color: PALETTE.textPrimary }}>Dashboard</h1>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <Card title="Total Write-Offs (YTD)" value={formatCurrency(summaryData.totalWriteOffs)} icon={<DollarSign />} color={PALETTE.chartGreen} />
+                <Card title="Bonus Depreciation" value={formatCurrency(summaryData.bonusDepreciation)} icon={<TrendingUp />} color={PALETTE.accentPurple} />
+                <Card title="Vehicle Deduction" value={formatCurrency(summaryData.vehicleDeduction)} icon={<Car />} color={PALETTE.accentPurple}/>
+                <Card title="Home Office & Other" value={formatCurrency(summaryData.homeOfficeOther)} icon={<Briefcase />} color={PALETTE.accentPurple}/>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="p-6 rounded-xl shadow-lg" style={{ backgroundColor: PALETTE.cardBg }}>
+                    <h3 className="text-xl font-semibold mb-4" style={{ color: PALETTE.textSecondary }}>Monthly Deductions</h3>
+                    <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={monthlyDeductions}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={PALETTE.divider} />
+                            <XAxis dataKey="name" tick={{ fill: PALETTE.textMuted }} />
+                            <YAxis tickFormatter={formatCurrency} tick={{ fill: PALETTE.textMuted }} />
+                            <Tooltip 
+                                contentStyle={{ backgroundColor: PALETTE.cardBg, border: `1px solid ${PALETTE.divider}`, color: PALETTE.textPrimary}} 
+                                itemStyle={{ color: PALETTE.textPrimary }}
+                                cursor={{ fill: 'rgba(108, 93, 211, 0.1)' }}
+                            />
+                            <Legend wrapperStyle={{ color: PALETTE.textMuted }} />
+                            <Line type="monotone" dataKey="deductions" stroke={PALETTE.chartGreen} strokeWidth={2} activeDot={{ r: 8, fill: PALETTE.chartGreen }} dot={{ fill: PALETTE.chartGreen, r: 4 }} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+                <div className="p-6 rounded-xl shadow-lg" style={{ backgroundColor: PALETTE.cardBg }}>
+                    <h3 className="text-xl font-semibold mb-4" style={{ color: PALETTE.textSecondary }}>Deductions by Category</h3>
+                    {deductionCategories.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={300}>
+                            <PieChart>
+                                <Pie
+                                    data={deductionCategories}
+                                    cx="50%"
+                                    cy="50%"
+                                    labelLine={false}
+                                    outerRadius={100}
+                                    fill={PALETTE.accentPurple}
+                                    dataKey="value"
+                                    nameKey="name"
+                                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                    labelStyle={{ fill: PALETTE.textPrimary, fontSize: '0.8rem' }}
+                                >
+                                    {deductionCategories.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={DASHBOARD_PIE_COLORS[index % DASHBOARD_PIE_COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip 
+                                    contentStyle={{ backgroundColor: PALETTE.cardBg, border: `1px solid ${PALETTE.divider}`, color: PALETTE.textPrimary}}
+                                    itemStyle={{ color: PALETTE.textPrimary }}
+                                />
+                                <Legend wrapperStyle={{ color: PALETTE.textMuted }} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <p className="text-center py-10" style={{ color: PALETTE.textMuted }}>No category data available. Add expenses to see this chart.</p>
+                    )}
+                </div>
+            </div>
+            
+            <div className="p-6 rounded-xl shadow-lg" style={{ backgroundColor: PALETTE.cardBg }}>
+                <h3 className="text-xl font-semibold mb-4 flex items-center" style={{ color: PALETTE.textSecondary }}><CalendarDays className="mr-2" style={{color: PALETTE.accentPurple}} /> Activity Calendar</h3>
+                <p style={{ color: PALETTE.textMuted }}>This module will track property service dates, logged hours, or CapEx timing. (Feature under development)</p>
+                <div className="mt-4 p-4 border rounded-lg text-center" style={{borderColor: PALETTE.divider}}>
+                    <p className="text-lg font-medium" style={{color: PALETTE.textPrimary}}>Upcoming Tasks / Deadlines</p>
+                    <ul className="mt-2 text-sm" style={{color: PALETTE.textMuted}}>
+                        <li>Property Tax Payment Due: July 15th</li>
+                        <li>Quarterly Estimated Tax: June 15th</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div className="mt-6 flex space-x-4">
+                <Button onClick={() => setActivePage('AddProperty')} iconLeft={<PlusCircle />}>Add New Property</Button>
+                <Button onClick={() => setActivePage('ExpenseLog')} iconLeft={<Receipt />} variant="secondary">Log Expense</Button>
+            </div>
+        </div>
+    );
+};
+
+// --- Add Property ---
+const AddProperty = ({ userId, showMessage, setActivePage, propertyToEdit, clearPropertyToEdit }) => {
+    const [property, setProperty] = useState({
+        name: '', purchasePrice: '', landAllocation: '', buildingValue: '', closingCosts: '',
+        renovationCapEx: '', placedInServiceDate: '', useBonusDepreciation: true,
+        costSegregationEstimate: false, notes: '', depreciableBasis: 0, annualDepreciation: 0, calculatedBonusDepreciation: 0,
+    });
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (propertyToEdit) {
+            setProperty({
+                id: propertyToEdit.id, name: propertyToEdit.name || '', purchasePrice: propertyToEdit.purchasePrice || '',
+                landAllocation: propertyToEdit.landAllocation || '', buildingValue: propertyToEdit.buildingValue || '',
+                closingCosts: propertyToEdit.closingCosts || '', renovationCapEx: propertyToEdit.renovationCapEx || '',
+                placedInServiceDate: propertyToEdit.placedInServiceDate ? (propertyToEdit.placedInServiceDate.toDate ? propertyToEdit.placedInServiceDate.toDate().toISOString().split('T')[0] : propertyToEdit.placedInServiceDate) : '',
+                useBonusDepreciation: propertyToEdit.useBonusDepreciation !== undefined ? propertyToEdit.useBonusDepreciation : true,
+                costSegregationEstimate: propertyToEdit.costSegregationEstimate || false, notes: propertyToEdit.notes || '',
+                depreciableBasis: propertyToEdit.depreciableBasis || 0, annualDepreciation: propertyToEdit.annualDepreciation || 0,
+                calculatedBonusDepreciation: propertyToEdit.calculatedBonusDepreciation || 0,
+            });
+        } else {
+             setProperty({
+                name: '', purchasePrice: '', landAllocation: '', buildingValue: '', closingCosts: '',
+                renovationCapEx: '', placedInServiceDate: '', useBonusDepreciation: true,
+                costSegregationEstimate: false, notes: '', depreciableBasis: 0, annualDepreciation: 0, calculatedBonusDepreciation: 0,
+            });
+        }
+    }, [propertyToEdit]);
+
+    const handleChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setProperty(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+    };
+    const handleToggle = (name, value) => setProperty(prev => ({ ...prev, [name]: value }));
+
+    const calculateDepreciation = () => {
+        const purchasePrice = parseFloat(property.purchasePrice) || 0;
+        const landAlloc = parseFloat(property.landAllocation) || 0;
+        const closing = parseFloat(property.closingCosts) || 0;
+        const renovations = parseFloat(property.renovationCapEx) || 0;
+        const landValue = (purchasePrice * landAlloc) / 100;
+        const buildingBasis = purchasePrice - landValue + closing + renovations;
+        const annualDep = buildingBasis / 27.5; 
+        let bonusDep = 0;
+        const currentBonusDepreciationRate = 0.60; 
+        if (property.useBonusDepreciation) bonusDep = buildingBasis * currentBonusDepreciationRate;
+        const remainingBasisForMACRS = buildingBasis - bonusDep;
+        const annualMacrsAfterBonus = remainingBasisForMACRS / 27.5;
+        setProperty(prev => ({
+            ...prev, buildingValue: buildingBasis.toFixed(2), depreciableBasis: buildingBasis.toFixed(2),
+            annualDepreciation: (property.useBonusDepreciation ? annualMacrsAfterBonus : annualDep).toFixed(2),
+            calculatedBonusDepreciation: bonusDep.toFixed(2),
+        }));
+        showMessage("Depreciation calculated (simplified). Review carefully.", "info");
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("User not authenticated or database not available.", "error"); return; }
+        setLoading(true);
+        const propertyData = {
+            ...property, purchasePrice: parseFloat(property.purchasePrice) || 0,
+            landAllocation: parseFloat(property.landAllocation) || 0, buildingValue: parseFloat(property.buildingValue) || 0,
+            closingCosts: parseFloat(property.closingCosts) || 0, renovationCapEx: parseFloat(property.renovationCapEx) || 0,
+            placedInServiceDate: property.placedInServiceDate ? new Date(property.placedInServiceDate) : serverTimestamp(),
+            depreciableBasis: parseFloat(property.depreciableBasis) || 0, annualDepreciation: parseFloat(property.annualDepreciation) || 0,
+            calculatedBonusDepreciation: parseFloat(property.calculatedBonusDepreciation) || 0, lastUpdatedAt: serverTimestamp(),
+        };
+        if (!propertyData.name || !propertyData.purchasePrice) { showMessage("Property Name and Purchase Price are required.", "error"); setLoading(false); return; }
+        try {
+            if (property.id) {
+                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/properties`, property.id), propertyData);
+                showMessage("Property updated successfully!", "success");
+            } else {
+                propertyData.createdAt = serverTimestamp();
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/properties`), propertyData);
+                showMessage("Property added successfully!", "success");
+            }
+            setProperty({ name: '', purchasePrice: '', landAllocation: '', buildingValue: '', closingCosts: '', renovationCapEx: '', placedInServiceDate: '', useBonusDepreciation: true, costSegregationEstimate: false, notes: '', depreciableBasis: 0, annualDepreciation: 0, calculatedBonusDepreciation: 0 });
+            if (clearPropertyToEdit) clearPropertyToEdit();
+            setActivePage('PropertyList');
+        } catch (error) { console.error("Error saving property:", error); showMessage(`Error saving property: ${error.message}`, "error"); }
+        setLoading(false);
+    };
+
+    return (
+        <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold" style={{ color: PALETTE.textPrimary }}>{propertyToEdit ? 'Edit Property' : 'Add New Property'}</h1>
+                <Button onClick={() => { if(clearPropertyToEdit) clearPropertyToEdit(); setActivePage('PropertyList');}} variant="secondary" iconLeft={<ListChecks />}>View All Properties</Button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-8 rounded-xl shadow-lg space-y-6" style={{ backgroundColor: PALETTE.cardBg }}>
+                <Input label="Property Name/Address" id="name" value={property.name} onChange={handleChange} placeholder="e.g., 123 Main St" required />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Input label="Purchase Price ($)" id="purchasePrice" type="number" value={property.purchasePrice} onChange={handleChange} placeholder="e.g., 300000" required />
+                    <Input label="Land Allocation (%)" id="landAllocation" type="number" value={property.landAllocation} onChange={handleChange} placeholder="e.g., 20 for 20%" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Input label="Closing Costs ($)" id="closingCosts" type="number" value={property.closingCosts} onChange={handleChange} placeholder="e.g., 5000" />
+                    <Input label="Renovation/CapEx ($)" id="renovationCapEx" type="number" value={property.renovationCapEx} onChange={handleChange} placeholder="e.g., 25000" />
+                </div>
+                <Input label="Placed in Service Date" id="placedInServiceDate" type="date" value={property.placedInServiceDate} onChange={handleChange} required />
+
+                <div className="my-6 border-t pt-6" style={{borderColor: PALETTE.divider}}>
+                    <h3 className="text-lg font-semibold mb-2" style={{ color: PALETTE.textSecondary }}>Depreciation Options</h3>
+                    <Toggle label="Apply Bonus Depreciation (Current Year %)" id="useBonusDepreciation" checked={property.useBonusDepreciation} onChange={(val) => handleToggle('useBonusDepreciation', val)} />
+                    <Toggle label="Estimate with Cost Segregation" id="costSegregationEstimate" checked={property.costSegregationEstimate} onChange={(val) => handleToggle('costSegregationEstimate', val)} />
+                    <p className="text-xs mt-1" style={{ color: PALETTE.textMuted }}>Cost segregation can accelerate depreciation but may require a professional study. This toggle is for estimation purposes.</p>
+                </div>
+                
+                <Button type="button" onClick={calculateDepreciation} variant="outline" iconLeft={<Wrench />} className="w-full md:w-auto">Calculate Depreciation (Simplified)</Button>
+
+                {property.depreciableBasis > 0 && (
+                    <div className="mt-4 p-4 rounded-lg" style={{backgroundColor: 'rgba(108, 93, 211, 0.1)', border: `1px solid ${PALETTE.accentPurple}`}}>
+                        <h4 className="font-semibold" style={{color: PALETTE.accentPurple}}>Calculated Values (Simplified):</h4>
+                        <p style={{color: PALETTE.textSecondary}}>Depreciable Basis (Building + CapEx): {formatCurrency(property.depreciableBasis)}</p>
+                        <p style={{color: PALETTE.textSecondary}}>Calculated Bonus Depreciation: {formatCurrency(property.calculatedBonusDepreciation)}</p>
+                        <p style={{color: PALETTE.textSecondary}}>Annual MACRS Depreciation (after bonus, if any): {formatCurrency(property.annualDepreciation)}</p>
+                        <p className="text-xs mt-1" style={{ color: PALETTE.textMuted }}>These are simplified estimates. Consult IRS Publication 946 and a tax professional for accurate calculations.</p>
+                    </div>
+                )}
+
+                <Textarea label="Notes" id="notes" value={property.notes} onChange={handleChange} placeholder="Any specific notes about this property, acquisition, or strategy." />
+                
+                <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{borderColor: PALETTE.divider}}>
+                     {propertyToEdit && <Button type="button" onClick={() => { if(clearPropertyToEdit) clearPropertyToEdit(); setActivePage('PropertyList');}} variant="secondary" disabled={loading}>Cancel</Button>}
+                    <Button type="submit" disabled={loading} iconLeft={loading ? <LoadingSpinner size="sm"/> : <Save />}>
+                        {loading ? (propertyToEdit ? 'Updating...' : 'Saving...') : (propertyToEdit ? 'Update Property' : 'Save Property')}
+                    </Button>
+                </div>
+            </form>
+        </div>
+    );
+};
+
+// --- Property List ---
+const PropertyList = ({ userId, showMessage, setActivePage, setPropertyToEdit }) => {
+    const [properties, setProperties] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [propertyToDelete, setPropertyToDelete] = useState(null);
+
+    useEffect(() => {
+        if (!userId || !db) return;
+        setLoading(true);
+        const q = query(collection(db, `artifacts/${appId}/users/${userId}/properties`));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const propsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setProperties(propsList);
+            setLoading(false);
+        }, (error) => { console.error("Error fetching properties: ", error); showMessage("Error fetching properties.", "error"); setLoading(false); });
+        return () => unsubscribe();
+    }, [userId, showMessage]);
+
+    const handleEdit = (property) => { setPropertyToEdit(property); setActivePage('AddProperty'); };
+    const confirmDelete = (property) => { setPropertyToDelete(property); setShowDeleteModal(true); };
+    const handleDelete = async () => {
+        if (!propertyToDelete || !userId || !db) return;
+        setLoading(true);
+        try {
+            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/properties`, propertyToDelete.id));
+            showMessage("Property deleted successfully.", "success");
+            setPropertyToDelete(null); setShowDeleteModal(false);
+        } catch (error) { console.error("Error deleting property: ", error); showMessage("Error deleting property.", "error"); }
+        setLoading(false);
+    };
+    
+    if (loading) return <div className="p-6"><LoadingSpinner size="lg" /></div>;
+
+    return (
+        <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold" style={{ color: PALETTE.textPrimary }}>My Properties</h1>
+                <Button onClick={() => setActivePage('AddProperty')} iconLeft={<PlusCircle />}>Add New Property</Button>
+            </div>
+            {properties.length === 0 ? (
+                <p className="p-8 rounded-xl shadow text-center" style={{ backgroundColor: PALETTE.cardBg, color: PALETTE.textMuted }}>No properties added yet. Click "Add New Property" to get started.</p>
+            ) : (
+                <div className="rounded-xl shadow-lg overflow-x-auto" style={{ backgroundColor: PALETTE.cardBg }}>
+                    <table className="w-full min-w-max text-left">
+                        <thead style={{borderBottom: `1px solid ${PALETTE.divider}`, backgroundColor: PALETTE.sidebarHover /* Slight darker than card */}}>
+                            <tr>
+                                {['Name', 'Purchase Price', 'In Service', 'Bonus Depr.', 'Annual Depr.', 'Actions'].map(header => (
+                                    <th key={header} className="p-4 text-sm font-semibold" style={{color: PALETTE.textSecondary}}>{header}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {properties.map((prop) => (
+                                <tr key={prop.id} className="transition-colors hover:bg-[rgba(255,255,255,0.03)]" style={{borderBottom: `1px solid ${PALETTE.divider}`}}>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textPrimary}}>{prop.name}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{formatCurrency(prop.purchasePrice)}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{formatDate(prop.placedInServiceDate)}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{prop.useBonusDepreciation ? formatCurrency(prop.calculatedBonusDepreciation) : 'N/A'}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{formatCurrency(prop.annualDepreciation)}</td>
+                                    <td className="p-4 text-sm">
+                                        <div className="flex space-x-2">
+                                            <Button onClick={() => handleEdit(prop)} variant="ghost" size="sm" className="p-1" iconLeft={<Edit3 size={18}/>} />
+                                            <Button onClick={() => confirmDelete(prop)} variant="ghost" size="sm" className="p-1" iconLeft={<Trash2 size={18} style={{color: PALETTE.chartRed}}/>} />
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Confirm Delete">
+                <p style={{color: PALETTE.textSecondary}}>Are you sure you want to delete the property "<strong>{propertyToDelete?.name}</strong>"? This action cannot be undone.</p>
+                <div className="mt-6 flex justify-end space-x-3">
+                    <Button variant="secondary" onClick={() => setShowDeleteModal(false)} disabled={loading}>Cancel</Button>
+                    <Button variant="danger" onClick={handleDelete} disabled={loading} iconLeft={loading ? <LoadingSpinner size="sm"/> : <Trash2/>}>
+                        {loading ? 'Deleting...' : 'Delete'}
+                    </Button>
+                </div>
+            </Modal>
+        </div>
+    );
+};
+
+// --- Expense Log ---
+const ExpenseLog = ({ userId, showMessage, setActivePage }) => {
+    const [expenses, setExpenses] = useState([]);
+    const [properties, setProperties] = useState([]);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [currentExpense, setCurrentExpense] = useState({ id: null, date: new Date().toISOString().split('T')[0], description: '', amount: '', category: '', propertyId: '' });
+    const [loading, setLoading] = useState(true);
+    const [formLoading, setFormLoading] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [expenseToDelete, setExpenseToDelete] = useState(null);
+
+    const expenseCategories = [
+        { value: 'repairs', label: 'Repairs' }, { value: 'maintenance', label: 'Maintenance' }, { value: 'utilities', label: 'Utilities' }, 
+        { value: 'insurance', label: 'Insurance' }, { value: 'property_tax', label: 'Property Tax' }, { value: 'management_fees', label: 'Management Fees' },
+        { value: 'legal_accounting', label: 'Legal & Accounting' }, { value: 'software_subscriptions', label: 'Software/Subscriptions' },
+        { value: 'coaching_education', label: 'Coaching/Continuing Education' }, { value: 'travel', label: 'Travel (Business)' },
+        { value: 'meals', label: 'Meals (Business - 50% rule may apply)' }, { value: 'cell_phone', label: 'Cell Phone (Business %)' },
+        { value: 'tools_supplies', label: 'Tools/Supplies (Business %)' }, { value: 'other', label: 'Other' }
+    ];
+
+    useEffect(() => {
+        if (!userId || !db) return;
+        setLoading(true);
+        const propsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/properties`));
+        const unsubProps = onSnapshot(propsQuery, (snapshot) => setProperties(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))), 
+            (err) => { console.error("Error fetching properties for expense log:", err); showMessage("Error loading properties.", "error"); });
+
+        const expensesQuery = query(collection(db, `artifacts/${appId}/users/${userId}/expenses`));
+        const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
+            const fetchedExpenses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            fetchedExpenses.sort((a, b) => (b.date?.toDate ? b.date.toDate() : new Date(b.date)) - (a.date?.toDate ? a.date.toDate() : new Date(a.date)));
+            setExpenses(fetchedExpenses); setLoading(false);
+        }, (err) => { console.error("Error fetching expenses:", err); showMessage("Error loading expenses.", "error"); setLoading(false); });
+        return () => { unsubProps(); unsubExpenses(); };
+    }, [userId, showMessage]);
+
+    const handleInputChange = (e) => { const { name, value } = e.target; setCurrentExpense(prev => ({ ...prev, [name]: value })); };
+    const openModal = (expense = null) => {
+        if (expense) setCurrentExpense({ id: expense.id, date: expense.date?.toDate ? expense.date.toDate().toISOString().split('T')[0] : (expense.date || new Date().toISOString().split('T')[0]), description: expense.description || '', amount: expense.amount || '', category: expense.category || '', propertyId: expense.propertyId || '' });
+        else setCurrentExpense({ id: null, date: new Date().toISOString().split('T')[0], description: '', amount: '', category: '', propertyId: '' });
+        setIsModalOpen(true);
+    };
+    const closeModal = () => { setIsModalOpen(false); setCurrentExpense({ id: null, date: new Date().toISOString().split('T')[0], description: '', amount: '', category: '', propertyId: '' }); };
+    const handleSubmitExpense = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("Not authenticated.", "error"); return; }
+        if (!currentExpense.description || !currentExpense.amount || !currentExpense.category || !currentExpense.date) { showMessage("Please fill in date, description, amount, and category.", "error"); return; }
+        setFormLoading(true);
+        const expenseData = { ...currentExpense, amount: parseFloat(currentExpense.amount), date: new Date(currentExpense.date), lastUpdatedAt: serverTimestamp() };
+        delete expenseData.id; 
+        try {
+            if (currentExpense.id) {
+                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/expenses`, currentExpense.id), expenseData);
+                showMessage("Expense updated successfully!", "success");
+            } else {
+                expenseData.createdAt = serverTimestamp();
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/expenses`), expenseData);
+                showMessage("Expense added successfully!", "success");
+            }
+            closeModal();
+        } catch (error) { console.error("Error saving expense:", error); showMessage(`Error saving expense: ${error.message}`, "error"); }
+        setFormLoading(false);
+    };
+    const confirmDelete = (expense) => { setExpenseToDelete(expense); setShowDeleteModal(true); };
+    const handleDeleteExpense = async () => {
+        if (!expenseToDelete || !userId || !db) return;
+        setFormLoading(true);
+        try {
+            await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/expenses`, expenseToDelete.id));
+            showMessage("Expense deleted successfully.", "success");
+            setExpenseToDelete(null); setShowDeleteModal(false);
+        } catch (error) { console.error("Error deleting expense: ", error); showMessage("Error deleting expense.", "error"); }
+        setFormLoading(false);
+    };
+
+    if (loading) return <div className="p-6"><LoadingSpinner size="lg" /></div>;
+
+    return (
+        <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold" style={{ color: PALETTE.textPrimary }}>Expense Log</h1>
+                <Button onClick={() => openModal()} iconLeft={<PlusCircle />}>Add Expense</Button>
+            </div>
+            {expenses.length === 0 ? (
+                <p className="p-8 rounded-xl shadow text-center" style={{ backgroundColor: PALETTE.cardBg, color: PALETTE.textMuted }}>No expenses logged yet. Click "Add Expense" to start.</p>
+            ) : (
+                <div className="rounded-xl shadow-lg overflow-x-auto" style={{ backgroundColor: PALETTE.cardBg }}>
+                    <table className="w-full min-w-max text-left">
+                        <thead style={{borderBottom: `1px solid ${PALETTE.divider}`, backgroundColor: PALETTE.sidebarHover }}>
+                            <tr>
+                                {['Date', 'Description', 'Category', 'Amount', 'Property', 'Actions'].map(header => (
+                                    <th key={header} className="p-4 text-sm font-semibold" style={{color: PALETTE.textSecondary}}>{header}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {expenses.map((exp) => (
+                                <tr key={exp.id} className="transition-colors hover:bg-[rgba(255,255,255,0.03)]" style={{borderBottom: `1px solid ${PALETTE.divider}`}}>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{formatDate(exp.date)}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textPrimary}}>{exp.description}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{expenseCategories.find(c => c.value === exp.category)?.label || exp.category}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{formatCurrency(exp.amount)}</td>
+                                    <td className="p-4 text-sm" style={{color: PALETTE.textSecondary}}>{properties.find(p => p.id === exp.propertyId)?.name || 'N/A'}</td>
+                                    <td className="p-4 text-sm">
+                                        <div className="flex space-x-2">
+                                            <Button onClick={() => openModal(exp)} variant="ghost" size="sm" className="p-1" iconLeft={<Edit3 size={18}/>} />
+                                            <Button onClick={() => confirmDelete(exp)} variant="ghost" size="sm" className="p-1" iconLeft={<Trash2 size={18} style={{color: PALETTE.chartRed}}/>} />
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            <Modal isOpen={isModalOpen} onClose={closeModal} title={currentExpense.id ? "Edit Expense" : "Add New Expense"}>
+                <form onSubmit={handleSubmitExpense} className="space-y-4">
+                    <Input label="Date" id="date" type="date" value={currentExpense.date} onChange={handleInputChange} required />
+                    <Textarea label="Description" id="description" value={currentExpense.description} onChange={handleInputChange} placeholder="e.g., Replaced kitchen faucet" required />
+                    <Input label="Amount ($)" id="amount" type="number" value={currentExpense.amount} onChange={handleInputChange} placeholder="e.g., 150.00" required />
+                    <Select label="Category" id="category" value={currentExpense.category} onChange={handleInputChange} options={expenseCategories} required />
+                    <Select label="Related Property (Optional)" id="propertyId" value={currentExpense.propertyId} onChange={handleInputChange} options={properties.map(p => ({ value: p.id, label: p.name }))} />
+                    <div className="flex justify-end space-x-3 pt-4 border-t" style={{borderColor: PALETTE.divider}}>
+                        <Button type="button" variant="secondary" onClick={closeModal} disabled={formLoading}>Cancel</Button>
+                        <Button type="submit" disabled={formLoading} iconLeft={formLoading ? <LoadingSpinner size="sm"/> : <Save />}>
+                            {formLoading ? 'Saving...' : (currentExpense.id ? 'Update Expense' : 'Add Expense')}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+            <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Confirm Delete Expense">
+                 <p style={{color: PALETTE.textSecondary}}>Are you sure you want to delete this expense: "<strong>{expenseToDelete?.description}</strong>" for {formatCurrency(expenseToDelete?.amount)}? This action cannot be undone.</p>
+                <div className="mt-6 flex justify-end space-x-3">
+                    <Button variant="secondary" onClick={() => setShowDeleteModal(false)} disabled={formLoading}>Cancel</Button>
+                    <Button variant="danger" onClick={handleDeleteExpense} disabled={formLoading} iconLeft={formLoading ? <LoadingSpinner size="sm"/> : <Trash2/>}>
+                        {formLoading ? 'Deleting...' : 'Delete'}
+                    </Button>
+                </div>
+            </Modal>
+        </div>
+    );
+};
+
+// --- Vehicle & Office Module ---
+const VehicleAndOffice = ({ userId, showMessage }) => {
+    const [vehicleLogs, setVehicleLogs] = useState([]);
+    const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+    const [currentVehicleLog, setCurrentVehicleLog] = useState({ id: null, date: new Date().toISOString().split('T')[0], description: '', milesBusiness: '', milesPersonal: '', isStandardMileage: true, fuelCost: '', maintenanceCost: '', insuranceCost: '', otherActualCost: '', section179Amount: '' });
+    const [vehicleLoading, setVehicleLoading] = useState(true);
+    const [vehicleFormLoading, setVehicleFormLoading] = useState(false);
+    const [officeDetails, setOfficeDetails] = useState({ id: null, officeSqFt: '', totalHomeSqFt: '', monthlyRent: '', utilities: '', internet: '', insurance: '', repairsMaintenance: '', isSimplifiedMethod: true, calculatedActualExpense: 0, calculatedSimplifiedExpense: 0 });
+    const [officeLoading, setOfficeLoading] = useState(true);
+    const [officeFormLoading, setOfficeFormLoading] = useState(false);
+    
+    useEffect(() => {
+        if (!userId || !db) return;
+        setVehicleLoading(true);
+        const q = query(collection(db, `artifacts/${appId}/users/${userId}/vehicleLog`));
+        const unsubVehicle = onSnapshot(q, (snapshot) => {
+            const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            logs.sort((a,b) => (b.date?.toDate ? b.date.toDate() : new Date(b.date)) - (a.date?.toDate ? a.date.toDate() : new Date(a.date)));
+            setVehicleLogs(logs); setVehicleLoading(false);
+        }, (err) => { console.error(err); showMessage("Error loading vehicle logs.", "error"); setVehicleLoading(false); });
+        
+        setOfficeLoading(true);
+        const officeDocRef = doc(db, `artifacts/${appId}/users/${userId}/officeDetails`, "mainOffice");
+        const unsubOffice = onSnapshot(officeDocRef, (docSnap) => {
+            if (docSnap.exists()) setOfficeDetails({ id: docSnap.id, ...docSnap.data() });
+            else setOfficeDetails({ id: "mainOffice", officeSqFt: '', totalHomeSqFt: '', monthlyRent: '', utilities: '', internet: '', insurance: '', repairsMaintenance: '', isSimplifiedMethod: true, calculatedActualExpense: 0, calculatedSimplifiedExpense: 0 });
+            setOfficeLoading(false);
+        }, (err) => { console.error(err); showMessage("Error loading office details.", "error"); setOfficeLoading(false); });
+        return () => { unsubVehicle(); unsubOffice(); };
+    }, [userId, showMessage]);
+    
+    const handleVehicleInputChange = (e) => { const { name, value, type, checked } = e.target; setCurrentVehicleLog(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value })); };
+    const handleVehicleToggle = (name, value) => setCurrentVehicleLog(prev => ({ ...prev, [name]: value }));
+    const openVehicleModal = (log = null) => {
+        if (log) setCurrentVehicleLog({ ...log, date: log.date?.toDate ? log.date.toDate().toISOString().split('T')[0] : (log.date || new Date().toISOString().split('T')[0]), });
+        else setCurrentVehicleLog({ id: null, date: new Date().toISOString().split('T')[0], description: '', milesBusiness: '', milesPersonal: '', isStandardMileage: true, fuelCost: '', maintenanceCost: '', insuranceCost: '', otherActualCost: '', section179Amount: '' });
+        setIsVehicleModalOpen(true);
+    };
+    const closeVehicleModal = () => setIsVehicleModalOpen(false);
+    const handleSubmitVehicleLog = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("Not authenticated.", "error"); return; }
+        setVehicleFormLoading(true);
+        const logData = { ...currentVehicleLog, date: new Date(currentVehicleLog.date), milesBusiness: parseFloat(currentVehicleLog.milesBusiness) || 0, milesPersonal: parseFloat(currentVehicleLog.milesPersonal) || 0, fuelCost: parseFloat(currentVehicleLog.fuelCost) || 0, maintenanceCost: parseFloat(currentVehicleLog.maintenanceCost) || 0, insuranceCost: parseFloat(currentVehicleLog.insuranceCost) || 0, otherActualCost: parseFloat(currentVehicleLog.otherActualCost) || 0, section179Amount: parseFloat(currentVehicleLog.section179Amount) || 0, lastUpdatedAt: serverTimestamp() };
+        delete logData.id;
+        try {
+            if (currentVehicleLog.id) {
+                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/vehicleLog`, currentVehicleLog.id), logData);
+                showMessage("Vehicle log updated.", "success");
+            } else {
+                logData.createdAt = serverTimestamp();
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/vehicleLog`), logData);
+                showMessage("Vehicle log added.", "success");
+            }
+            closeVehicleModal();
+        } catch (error) { console.error(error); showMessage(`Error saving vehicle log: ${error.message}`, "error"); }
+        setVehicleFormLoading(false);
+    };
+    const handleDeleteVehicleLog = async (logId) => {
+        // Replaced window.confirm with custom modal logic if available, or keep for now
+        // For brevity, keeping window.confirm but ideally use custom modal
+        if (!userId || !db || !logId) return;
+        const customConfirm = (messageText) => new Promise((resolve) => {
+            // This is a placeholder for a proper custom modal confirmation
+            // In a real app, you'd open a modal and resolve based on user action
+            const confirmed = window.confirm(messageText);
+            resolve(confirmed);
+        });
+
+        if (await customConfirm("Are you sure you want to delete this vehicle log? This action cannot be undone.")) {
+            setVehicleFormLoading(true);
+            try {
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/vehicleLog`, logId));
+                showMessage("Vehicle log deleted.", "success");
+            } catch (error) { console.error(error); showMessage("Error deleting log.", "error"); }
+            setVehicleFormLoading(false);
+        }
+    };
+
+    const handleOfficeInputChange = (e) => { const { name, value, type, checked } = e.target; setOfficeDetails(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value })); };
+    const handleOfficeToggle = (name, value) => setOfficeDetails(prev => ({ ...prev, [name]: value }));
+    const calculateOfficeDeduction = () => {
+        const officeSqFt = parseFloat(officeDetails.officeSqFt) || 0;
+        const totalHomeSqFt = parseFloat(officeDetails.totalHomeSqFt) || 0;
+        let simplifiedDed = Math.min(officeSqFt, 300) * 5;
+        let actualDed = 0;
+        if (totalHomeSqFt > 0 && officeSqFt > 0) {
+            const businessUsePercentage = officeSqFt / totalHomeSqFt;
+            const totalIndirectExpenses = (parseFloat(officeDetails.monthlyRent) * 12 || 0) + (parseFloat(officeDetails.utilities) * 12 || 0) + (parseFloat(officeDetails.internet) * 12 || 0) + (parseFloat(officeDetails.insurance) * 12 || 0) + (parseFloat(officeDetails.repairsMaintenance) || 0);
+            actualDed = (totalIndirectExpenses * businessUsePercentage); // Direct expenses would be added here
+        }
+        setOfficeDetails(prev => ({ ...prev, calculatedSimplifiedExpense: simplifiedDed, calculatedActualExpense: actualDed }));
+        showMessage("Office deductions calculated (simplified).", "info");
+    };
+    const handleSaveOfficeDetails = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("Not authenticated.", "error"); return; }
+        setOfficeFormLoading(true);
+        const officeData = { ...officeDetails, officeSqFt: parseFloat(officeDetails.officeSqFt) || 0, totalHomeSqFt: parseFloat(officeDetails.totalHomeSqFt) || 0, monthlyRent: parseFloat(officeDetails.monthlyRent) || 0, utilities: parseFloat(officeDetails.utilities) || 0, internet: parseFloat(officeDetails.internet) || 0, insurance: parseFloat(officeDetails.insurance) || 0, repairsMaintenance: parseFloat(officeDetails.repairsMaintenance) || 0, calculatedSimplifiedExpense: parseFloat(officeDetails.calculatedSimplifiedExpense) || 0, calculatedActualExpense: parseFloat(officeDetails.calculatedActualExpense) || 0, lastUpdatedAt: serverTimestamp() };
+        try {
+            await setDoc(doc(db, `artifacts/${appId}/users/${userId}/officeDetails`, "mainOffice"), officeData, { merge: true });
+            showMessage("Office details saved.", "success");
+        } catch (error) { console.error(error); showMessage(`Error saving office details: ${error.message}`, "error"); }
+        setOfficeFormLoading(false);
+    };
+
+    return (
+        <div className="p-6 space-y-8">
+            <section className="p-6 rounded-xl shadow-lg" style={{backgroundColor: PALETTE.cardBg}}>
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-semibold flex items-center" style={{ color: PALETTE.textPrimary }}><Car className="mr-3" style={{color: PALETTE.accentPurple}} />Vehicle Deductions</h2>
+                    <Button onClick={() => openVehicleModal()} iconLeft={<PlusCircle />}>Log Vehicle Use</Button>
+                </div>
+                {vehicleLoading ? <LoadingSpinner /> : vehicleLogs.length === 0 ? <p style={{color: PALETTE.textMuted}}>No vehicle logs yet.</p> : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-max text-left">
+                            <thead style={{borderBottom: `1px solid ${PALETTE.divider}`, backgroundColor: PALETTE.sidebarHover}}>
+                                <tr>
+                                    {['Date', 'Description', 'Method', 'Business Miles', 'Deduction (Est.)', 'Actions'].map(h=>(<th key={h} className="p-3 text-sm font-semibold" style={{color: PALETTE.textSecondary}}>{h}</th>))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {vehicleLogs.map(log => {
+                                    let deduction = log.isStandardMileage ? (parseFloat(log.milesBusiness) || 0) * 0.67 : (parseFloat(log.fuelCost) || 0) + (parseFloat(log.maintenanceCost) || 0) + (parseFloat(log.insuranceCost) || 0) + (parseFloat(log.otherActualCost) || 0);
+                                    return (
+                                    <tr key={log.id} className="hover:bg-[rgba(255,255,255,0.03)]" style={{borderBottom: `1px solid ${PALETTE.divider}`}}>
+                                        <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{formatDate(log.date)}</td>
+                                        <td className="p-3 text-sm" style={{color: PALETTE.textPrimary}}>{log.description}</td>
+                                        <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{log.isStandardMileage ? 'Standard Mileage' : 'Actual Expense'}</td>
+                                        <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{log.milesBusiness || 'N/A'}</td>
+                                        <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{formatCurrency(deduction)}</td>
+                                        <td className="p-3 text-sm">
+                                            <div className="flex space-x-1">
+                                                <Button onClick={() => openVehicleModal(log)} variant="ghost" size="sm" className="p-1" iconLeft={<Edit3 size={16}/>} />
+                                                <Button onClick={() => handleDeleteVehicleLog(log.id)} variant="ghost" size="sm" className="p-1" iconLeft={<Trash2 size={16} style={{color: PALETTE.chartRed}}/>} />
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )})}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </section>
+
+            <section className="p-6 rounded-xl shadow-lg" style={{backgroundColor: PALETTE.cardBg}}>
+                <h2 className="text-2xl font-semibold mb-4 flex items-center" style={{ color: PALETTE.textPrimary }}><Home className="mr-3" style={{color: PALETTE.accentPurple}} />Home Office Deduction</h2>
+                {officeLoading ? <LoadingSpinner /> : (
+                    <form onSubmit={handleSaveOfficeDetails} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Input label="Dedicated Office Sq. Footage" id="officeSqFt" type="number" value={officeDetails.officeSqFt} onChange={handleOfficeInputChange} placeholder="e.g., 150" />
+                            <Input label="Total Home Sq. Footage" id="totalHomeSqFt" type="number" value={officeDetails.totalHomeSqFt} onChange={handleOfficeInputChange} placeholder="e.g., 1500" />
+                        </div>
+                        <Toggle label="Use Simplified Method ($5/sq ft, max 300 sq ft)" id="isSimplifiedMethod" checked={officeDetails.isSimplifiedMethod} onChange={(val) => handleOfficeToggle('isSimplifiedMethod', val)} />
+                        {!officeDetails.isSimplifiedMethod && (
+                            <div className="p-4 border rounded-md mt-4 space-y-3" style={{backgroundColor: PALETTE.mainBg, borderColor: PALETTE.divider}}>
+                                <h4 className="font-semibold" style={{color: PALETTE.textSecondary}}>Actual Expenses (Annual or Pro-rated Annual)</h4>
+                                <Input label="Rent/Mortgage Interest (Annual Pro-ratable)" id="monthlyRent" type="number" value={officeDetails.monthlyRent} onChange={handleOfficeInputChange} placeholder="Annual amount" />
+                                <Input label="Utilities (Annual Pro-ratable)" id="utilities" type="number" value={officeDetails.utilities} onChange={handleOfficeInputChange} placeholder="e.g., Electricity, Gas, Water" />
+                                <Input label="Home Insurance (Annual Pro-ratable)" id="insurance" type="number" value={officeDetails.insurance} onChange={handleOfficeInputChange} />
+                                <Input label="Internet (Annual, specify business % if not 100%)" id="internet" type="number" value={officeDetails.internet} onChange={handleOfficeInputChange} />
+                                <Input label="Repairs & Maintenance (General Home - Annual Pro-ratable)" id="repairsMaintenance" type="number" value={officeDetails.repairsMaintenance} onChange={handleOfficeInputChange} />
+                                <p className="text-xs" style={{color: PALETTE.textMuted}}>Direct expenses (e.g., painting only the office) can be fully deducted. Indirect expenses are pro-rated by business use % of home.</p>
+                            </div>
+                        )}
+                        <div className="flex flex-col sm:flex-row items-center space-y-3 sm:space-y-0 sm:space-x-3 pt-3">
+                            <Button type="button" onClick={calculateOfficeDeduction} variant="outline" iconLeft={<Wrench />}>Calculate Deduction</Button>
+                            <Button type="submit" disabled={officeFormLoading} iconLeft={officeFormLoading ? <LoadingSpinner size="sm"/> : <Save />}>
+                                {officeFormLoading ? 'Saving...' : 'Save Office Details'}
+                            </Button>
+                        </div>
+                         {(officeDetails.calculatedSimplifiedExpense > 0 || officeDetails.calculatedActualExpense > 0) && (
+                            <div className="mt-4 p-3 rounded-lg text-sm" style={{backgroundColor: 'rgba(108, 93, 211, 0.1)', border: `1px solid ${PALETTE.accentPurple}`}}>
+                                <h4 className="font-semibold" style={{color: PALETTE.accentPurple}}>Calculated Deduction (Annual Estimate):</h4>
+                                {officeDetails.isSimplifiedMethod ? (
+                                    <p style={{color: PALETTE.textSecondary}}>Simplified Method: {formatCurrency(officeDetails.calculatedSimplifiedExpense)}</p>
+                                ) : (
+                                    <p style={{color: PALETTE.textSecondary}}>Actual Expense Method: {formatCurrency(officeDetails.calculatedActualExpense)}</p>
+                                )}
+                                <p className="text-xs mt-1" style={{ color: PALETTE.textMuted }}>This is a simplified estimate. Consult IRS Pub 587.</p>
+                            </div>
+                        )}
+                    </form>
+                )}
+            </section>
+
+            <Modal isOpen={isVehicleModalOpen} onClose={closeVehicleModal} title={currentVehicleLog.id ? "Edit Vehicle Log" : "Add Vehicle Log"}>
+                <form onSubmit={handleSubmitVehicleLog} className="space-y-4">
+                    <Input label="Date" id="date" type="date" value={currentVehicleLog.date} onChange={handleVehicleInputChange} required />
+                    <Textarea label="Description of Business Use" id="description" value={currentVehicleLog.description} onChange={handleVehicleInputChange} placeholder="e.g., Client meeting at 123 Oak St" required />
+                    <Toggle label="Use Standard Mileage Rate" id="isStandardMileage" checked={currentVehicleLog.isStandardMileage} onChange={(val) => handleVehicleToggle('isStandardMileage', val)} />
+                    {currentVehicleLog.isStandardMileage ? (
+                        <>
+                            <Input label="Business Miles" id="milesBusiness" type="number" value={currentVehicleLog.milesBusiness} onChange={handleVehicleInputChange} placeholder="e.g., 50" />
+                            <Input label="Personal Miles (for records)" id="milesPersonal" type="number" value={currentVehicleLog.milesPersonal} onChange={handleVehicleInputChange} placeholder="e.g., 10" />
+                        </>
+                    ) : (
+                        <div className="p-3 border rounded-md space-y-3" style={{backgroundColor: PALETTE.mainBg, borderColor: PALETTE.divider}}>
+                            <h4 className="font-semibold" style={{color: PALETTE.textSecondary}}>Actual Expenses for this Trip/Period</h4>
+                            <Input label="Fuel Cost ($)" id="fuelCost" type="number" value={currentVehicleLog.fuelCost} onChange={handleVehicleInputChange} />
+                            <Input label="Maintenance/Repairs ($)" id="maintenanceCost" type="number" value={currentVehicleLog.maintenanceCost} onChange={handleVehicleInputChange} />
+                            <Input label="Insurance (pro-rated for trip/period) ($)" id="insuranceCost" type="number" value={currentVehicleLog.insuranceCost} onChange={handleVehicleInputChange} />
+                            <Input label="Other Actual Costs (tolls, parking) ($)" id="otherActualCost" type="number" value={currentVehicleLog.otherActualCost} onChange={handleVehicleInputChange} />
+                            <p className="text-xs" style={{color: PALETTE.textMuted}}>Vehicle depreciation and Section 179 are typically calculated annually. Luxury auto limits apply.</p>
+                        </div>
+                    )}
+                     <Input label="Section 179 Amount (if applicable, consult CPA)" id="section179Amount" type="number" value={currentVehicleLog.section179Amount} onChange={handleVehicleInputChange} placeholder="For qualifying vehicles" />
+                    <div className="flex justify-end space-x-3 pt-3 border-t" style={{borderColor: PALETTE.divider}}>
+                        <Button type="button" variant="secondary" onClick={closeVehicleModal} disabled={vehicleFormLoading}>Cancel</Button>
+                        <Button type="submit" disabled={vehicleFormLoading} iconLeft={vehicleFormLoading ? <LoadingSpinner size="sm"/> : <Save />}>
+                            {vehicleFormLoading ? 'Saving...' : (currentVehicleLog.id ? 'Update Log' : 'Add Log')}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+        </div>
+    );
+};
+
+// --- REP Tracker ---
+const REPTracker = ({ userId, showMessage }) => {
+    const [hoursLog, setHoursLog] = useState([]);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [currentLogEntry, setCurrentLogEntry] = useState({ id: null, date: new Date().toISOString().split('T')[0], hours: '', activityDescription: '', propertyId: '', materialParticipation: false });
+    const [properties, setProperties] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [formLoading, setFormLoading] = useState(false);
+    const [totalHoursYTD, setTotalHoursYTD] = useState(0);
+    const REP_MIN_HOURS_TOTAL = 750;
+
+    useEffect(() => {
+        if (!userId || !db) return;
+        setLoading(true);
+        const propsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/properties`));
+        const unsubProps = onSnapshot(propsQuery, (snapshot) => setProperties(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))), (err) => { console.error(err); showMessage("Error loading properties.", "error"); });
+        const hoursQuery = query(collection(db, `artifacts/${appId}/users/${userId}/repHours`));
+        const unsubHours = onSnapshot(hoursQuery, (snapshot) => {
+            const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            logs.sort((a,b) => (b.date?.toDate ? b.date.toDate() : new Date(b.date)) - (a.date?.toDate ? a.date.toDate() : new Date(a.date)));
+            setHoursLog(logs);
+            const currentYear = new Date().getFullYear();
+            const ytd = logs.reduce((acc, log) => (log.date?.toDate ? log.date.toDate() : new Date(log.date)).getFullYear() === currentYear ? acc + (parseFloat(log.hours) || 0) : acc, 0);
+            setTotalHoursYTD(ytd); setLoading(false);
+        }, (err) => { console.error(err); showMessage("Error loading REP hours.", "error"); setLoading(false); });
+        return () => { unsubProps(); unsubHours(); };
+    }, [userId, showMessage]);
+
+    const handleInputChange = (e) => { const { name, value, type, checked } = e.target; setCurrentLogEntry(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value })); };
+    const handleToggle = (name, value) => setCurrentLogEntry(prev => ({ ...prev, [name]: value }));
+    const openModal = (entry = null) => {
+        if (entry) setCurrentLogEntry({ ...entry, date: entry.date?.toDate ? entry.date.toDate().toISOString().split('T')[0] : (entry.date || new Date().toISOString().split('T')[0]), });
+        else setCurrentLogEntry({ id: null, date: new Date().toISOString().split('T')[0], hours: '', activityDescription: '', propertyId: '', materialParticipation: false });
+        setIsModalOpen(true);
+    };
+    const closeModal = () => setIsModalOpen(false);
+    const handleSubmitLogEntry = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("Not authenticated.", "error"); return; }
+        setFormLoading(true);
+        const logData = { ...currentLogEntry, date: new Date(currentLogEntry.date), hours: parseFloat(currentLogEntry.hours) || 0, lastUpdatedAt: serverTimestamp() };
+        delete logData.id;
+        try {
+            if (currentLogEntry.id) {
+                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/repHours`, currentLogEntry.id), logData);
+                showMessage("REP log entry updated.", "success");
+            } else {
+                logData.createdAt = serverTimestamp();
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/repHours`), logData);
+                showMessage("REP log entry added.", "success");
+            }
+            closeModal();
+        } catch (error) { console.error(error); showMessage(`Error saving REP log: ${error.message}`, "error"); }
+        setFormLoading(false);
+    };
+    const handleDeleteLogEntry = async (logId) => {
+        if (!userId || !db || !logId) return;
+        // Placeholder for custom modal confirmation
+        if (window.confirm("Are you sure you want to delete this REP log entry?")) {
+            setFormLoading(true);
+            try {
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/repHours`, logId));
+                showMessage("REP log entry deleted.", "success");
+            } catch (error) { console.error(error); showMessage("Error deleting REP log.", "error"); }
+            setFormLoading(false);
+        }
+    };
+
+    const hoursProgress = Math.min((totalHoursYTD / REP_MIN_HOURS_TOTAL) * 100, 100);
+    const likelyToQualify = totalHoursYTD >= REP_MIN_HOURS_TOTAL;
+
+    if (loading) return <div className="p-6"><LoadingSpinner size="lg" /></div>;
+
+    return (
+        <div className="p-6 space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold flex items-center" style={{ color: PALETTE.textPrimary }}><Target className="mr-3" style={{color: PALETTE.accentPurple}} />Real Estate Professional (REP) Status Tracker</h1>
+                <Button onClick={() => openModal()} iconLeft={<PlusCircle />}>Log Hours</Button>
+            </div>
+            <div className="p-6 rounded-xl shadow-lg" style={{backgroundColor: PALETTE.cardBg}}>
+                <h3 className="text-xl font-semibold mb-3" style={{ color: PALETTE.textSecondary }}>REP Qualification Progress (YTD)</h3>
+                <div className="mb-2">
+                    <div className="flex justify-between text-sm font-medium" style={{color: PALETTE.textMuted}}>
+                        <span>Total Hours Logged: {totalHoursYTD.toFixed(1)}</span>
+                        <span>Goal: {REP_MIN_HOURS_TOTAL} hours</span>
+                    </div>
+                    <div className="w-full rounded-full h-4 mt-1" style={{backgroundColor: PALETTE.divider}}>
+                        <div className="h-4 rounded-full" style={{ width: `${hoursProgress}%`, backgroundColor: PALETTE.accentPurple }}></div>
+                    </div>
+                    <p className="text-xs mt-1 text-right" style={{color: PALETTE.textMuted}}>{hoursProgress.toFixed(1)}% Complete</p>
+                </div>
+                <div className={`mt-3 p-3 rounded-md text-sm ${likelyToQualify ? 'bg-opacity-10 border' : 'bg-opacity-10 border'}`}
+                     style={{
+                        backgroundColor: likelyToQualify ? `rgba(61, 213, 152, 0.1)` : `rgba(255, 187, 40, 0.1)`, // Using chartGreen and a yellow
+                        borderColor: likelyToQualify ? PALETTE.chartGreen : '#FFBB28', 
+                        color: likelyToQualify ? PALETTE.chartGreen : '#FFBB28'
+                     }}
+                >
+                    <p className="font-semibold">AI Summary (Mock):</p>
+                    {likelyToQualify ? 
+                        "You have met the minimum hours requirement (750+ hours). Ensure you also meet the 'more than half personal services' test and materially participate in your rental real estate activities." :
+                        `You need ${Math.max(0, REP_MIN_HOURS_TOTAL - totalHoursYTD).toFixed(1)} more hours to meet the 750-hour threshold. Keep logging your activities!`
+                    }
+                    <p className="text-xs mt-1" style={{color: PALETTE.textMuted}}>This is a simplified tracker. Consult IRS Publication 925 and a tax professional for full REP status requirements.</p>
+                </div>
+            </div>
+            {hoursLog.length === 0 && !loading ? (
+                <p className="p-8 rounded-xl shadow text-center" style={{ backgroundColor: PALETTE.cardBg, color: PALETTE.textMuted }}>No hours logged yet.</p>
+            ) : (
+                <div className="rounded-xl shadow-lg overflow-x-auto" style={{ backgroundColor: PALETTE.cardBg }}>
+                    <table className="w-full min-w-max text-left">
+                        <thead style={{borderBottom: `1px solid ${PALETTE.divider}`, backgroundColor: PALETTE.sidebarHover}}>
+                            <tr>
+                                {['Date', 'Activity', 'Hours', 'Property', 'Material Part.', 'Actions'].map(h=>(<th key={h} className="p-3 text-sm font-semibold" style={{color: PALETTE.textSecondary}}>{h}</th>))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {hoursLog.map(log => (
+                                <tr key={log.id} className="hover:bg-[rgba(255,255,255,0.03)]" style={{borderBottom: `1px solid ${PALETTE.divider}`}}>
+                                    <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{formatDate(log.date)}</td>
+                                    <td className="p-3 text-sm" style={{color: PALETTE.textPrimary}}>{log.activityDescription}</td>
+                                    <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{parseFloat(log.hours || 0).toFixed(1)}</td>
+                                    <td className="p-3 text-sm" style={{color: PALETTE.textSecondary}}>{properties.find(p => p.id === log.propertyId)?.name || 'General'}</td>
+                                    <td className="p-3 text-sm">{log.materialParticipation ? <span style={{color: PALETTE.chartGreen}}>Yes</span> : <span style={{color: PALETTE.textMuted}}>No</span>}</td>
+                                    <td className="p-3 text-sm">
+                                        <div className="flex space-x-1">
+                                            <Button onClick={() => openModal(log)} variant="ghost" size="sm" className="p-1" iconLeft={<Edit3 size={16}/>} />
+                                            <Button onClick={() => handleDeleteLogEntry(log.id)} variant="ghost" size="sm" className="p-1" iconLeft={<Trash2 size={16} style={{color: PALETTE.chartRed}}/>} />
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            <Modal isOpen={isModalOpen} onClose={closeModal} title={currentLogEntry.id ? "Edit Hour Log" : "Log New Hours"}>
+                <form onSubmit={handleSubmitLogEntry} className="space-y-4">
+                    <Input label="Date" id="date" type="date" value={currentLogEntry.date} onChange={handleInputChange} required />
+                    <Textarea label="Activity Description" id="activityDescription" value={currentLogEntry.activityDescription} onChange={handleInputChange} placeholder="e.g., Property viewing, tenant screening, repairs coordination" required />
+                    <Input label="Hours Spent" id="hours" type="number" step="0.1" value={currentLogEntry.hours} onChange={handleInputChange} placeholder="e.g., 2.5" required />
+                    <Select label="Related Property (Optional)" id="propertyId" value={currentLogEntry.propertyId} onChange={handleInputChange} options={[{value: '', label: 'General/Multiple Properties'}, ...properties.map(p => ({ value: p.id, label: p.name }))]} />
+                    <Toggle label="Counts towards Material Participation test?" id="materialParticipation" checked={currentLogEntry.materialParticipation} onChange={(val) => handleToggle('materialParticipation', val)} />
+                    <p className="text-xs" style={{color: PALETTE.textMuted}}>Material participation is crucial for REP status and avoiding passive activity loss limitations. Refer to IRS guidelines.</p>
+                    <div className="flex justify-end space-x-3 pt-3 border-t" style={{borderColor: PALETTE.divider}}>
+                        <Button type="button" variant="secondary" onClick={closeModal} disabled={formLoading}>Cancel</Button>
+                        <Button type="submit" disabled={formLoading} iconLeft={formLoading ? <LoadingSpinner size="sm"/> : <Save />}>
+                            {formLoading ? 'Saving...' : (currentLogEntry.id ? 'Update Log' : 'Add Log')}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+        </div>
+    );
+};
+
+// --- IRS Audit Shield (Placeholder) ---
+const IRSAuditShield = ({ userId, showMessage }) => {
+    const [riskScanResult, setRiskScanResult] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    const runRiskScan = async () => {
+        setLoading(true);
+        await new Promise(resolve => setTimeout(resolve, 1500)); 
+        const mockData = { totalDeductions: Math.random() * 200000, bonusDepreciationPercentage: Math.random() * 0.8, missingServiceDates: Math.random() > 0.7, repHours: Math.random() * 1000, };
+        let flags = [];
+        if (mockData.bonusDepreciationPercentage > 0.6 && new Date().getFullYear() > 2023) flags.push({ area: "Bonus Depreciation", issue: `High bonus depreciation claimed (${(mockData.bonusDepreciationPercentage*100).toFixed(0)}%). Ensure eligibility based on current year's phase-out rules.`, reference: "IRS Publication 946, Chapter 3", severity: "medium" });
+        if (mockData.missingServiceDates) flags.push({ area: "Property Records", issue: "Potential missing 'placed-in-service' dates for some assets. This is critical for depreciation.", reference: "IRS Publication 946, Chapter 1", severity: "high" });
+        if (mockData.repHours > 500 && mockData.repHours < 750) flags.push({ area: "REP Status", issue: `REP hours (${mockData.repHours.toFixed(0)}) are substantial but below the 750-hour threshold. Ensure all time is accurately logged and meets other REP tests.`, reference: "IRS Publication 925", severity: "medium" });
+        if (flags.length === 0) flags.push({ area: "General Review", issue: "Initial scan shows no major red flags based on simplified checks. Always ensure thorough documentation.", reference: "General Record Keeping Best Practices", severity: "low" });
+        setRiskScanResult({ flags, scanDate: new Date() }); setLoading(false);
+        showMessage("Risk scan complete (simulated).", "info");
+    };
+
+    const getSeverityStyles = (severity) => {
+        switch (severity) {
+            case 'high': return { borderColor: PALETTE.chartRed, backgroundColor: `rgba(255, 107, 107, 0.1)`, textColor: PALETTE.chartRed };
+            case 'medium': return { borderColor: '#FFBB28', backgroundColor: `rgba(255, 187, 40, 0.1)`, textColor: '#FFBB28' }; // Example Yellow
+            case 'low': return { borderColor: PALETTE.chartGreen, backgroundColor: `rgba(61, 213, 152, 0.1)`, textColor: PALETTE.chartGreen };
+            default: return { borderColor: PALETTE.divider, backgroundColor: `rgba(47, 53, 72, 0.1)`, textColor: PALETTE.textSecondary };
+        }
+    };
+
+    return (
+        <div className="p-6 space-y-6">
+            <h1 className="text-3xl font-bold flex items-center" style={{ color: PALETTE.textPrimary }}><Shield className="mr-3" style={{color: PALETTE.chartRed}} />IRS Audit Shield™</h1>
+            <div className="p-6 rounded-xl shadow-lg" style={{backgroundColor: PALETTE.cardBg}}>
+                <p className="mb-4" style={{color: PALETTE.textSecondary}}>This module (currently simulated) helps identify potential red flags in your tax deductions and documentation. It cross-references your data with common audit triggers and IRS guidelines.</p>
+                <Button onClick={runRiskScan} disabled={loading} iconLeft={loading ? <LoadingSpinner size="sm"/> : <Search />}>
+                    {loading ? 'Scanning...' : 'Run AI Risk Scan (Simulated)'}
+                </Button>
+                {riskScanResult && (
+                    <div className="mt-6">
+                        <h3 className="text-xl font-semibold mb-3" style={{ color: PALETTE.textSecondary }}>Scan Results (as of {formatDate(riskScanResult.scanDate)}):</h3>
+                        {riskScanResult.flags.length > 0 ? (
+                            <ul className="space-y-3">
+                                {riskScanResult.flags.map((flag, index) => {
+                                    const severityStyle = getSeverityStyles(flag.severity);
+                                    return (
+                                    <li key={index} className={`p-4 rounded-md border-l-4`} style={{borderColor: severityStyle.borderColor, backgroundColor: severityStyle.backgroundColor}}>
+                                        <div className="flex items-start">
+                                            <AlertTriangle className={`mr-3 mt-1 ${flag.severity === 'low' ? 'hidden' : '' }`} size={20} style={{color: severityStyle.textColor}} />
+                                            <div>
+                                                <p className="font-semibold" style={{color: PALETTE.textPrimary}}>{flag.area}</p>
+                                                <p className="text-sm" style={{color: PALETTE.textSecondary}}>{flag.issue}</p>
+                                                <p className="text-xs mt-1" style={{ color: PALETTE.textMuted }}>Reference: {flag.reference}</p>
+                                            </div>
+                                        </div>
+                                    </li>
+                                )})}
+                            </ul>
+                        ) : (
+                            <p style={{color: PALETTE.textMuted}}>No significant red flags identified in this simulated scan.</p>
+                        )}
+                        <div className="mt-6 p-4 rounded-lg border" style={{backgroundColor: 'rgba(108, 93, 211, 0.1)', borderColor: PALETTE.accentPurple}}>
+                            <h4 className="font-semibold flex items-center" style={{color: PALETTE.accentPurple}}><FileText className="mr-2"/>Generated PDF Summary (Mock)</h4>
+                            <p className="text-sm mt-1" style={{color: PALETTE.textSecondary}}>In a full version, you could download a PDF report summarizing these findings with direct links/references to IRS publications (e.g., Pub 946, 527, 463).</p>
+                            <Button variant="outline" className="mt-3" iconLeft={<Download size={18}/>} onClick={() => showMessage("PDF generation is a mock feature.", "info")}>Download Mock Summary PDF</Button>
+                        </div>
+                    </div>
+                )}
+                 <p className="text-xs mt-6 italic" style={{color: PALETTE.textMuted}}>Disclaimer: WriteOffMaster's Audit Shield is for informational purposes only and not a substitute for professional tax advice. Consult with a qualified CPA or tax advisor.</p>
+            </div>
+        </div>
+    );
+};
+
+// --- Reports (Placeholder) ---
+const Reports = ({ showMessage }) => {
+    const handleExport = (format) => { showMessage(`Simulating ${format.toUpperCase()} export... In a real app, this would download a file.`, "info"); console.log(`Mock ${format.toUpperCase()} export initiated.`); };
+    return (
+        <div className="p-6 space-y-6">
+            <h1 className="text-3xl font-bold flex items-center" style={{ color: PALETTE.textPrimary }}><FileSpreadsheet className="mr-3" style={{color: PALETTE.accentPurple}} />Reports & Exporting</h1>
+            <div className="p-6 rounded-xl shadow-lg" style={{backgroundColor: PALETTE.cardBg}}>
+                <p className="mb-4" style={{color: PALETTE.textSecondary}}>Generate professional tax reports that can be shared directly with your CPA or family office advisor. Reports will be styled and watermarked with WriteOffMaster branding.</p>
+                <div className="space-y-3 sm:space-y-0 sm:flex sm:space-x-3">
+                    <Button onClick={() => handleExport('pdf')} iconLeft={<Download />}>Export Summary as PDF (Mock)</Button>
+                    <Button onClick={() => handleExport('csv')} variant="secondary" iconLeft={<Download />}>Export Data as CSV (Mock)</Button>
+                </div>
+                <div className="mt-6 p-4 rounded-lg border" style={{backgroundColor: PALETTE.sidebarHover, borderColor: PALETTE.divider}}>
+                    <h4 className="font-semibold" style={{color: PALETTE.textSecondary}}>Example Report Content (Conceptual):</h4>
+                    <ul className="list-disc list-inside text-sm mt-2 space-y-1" style={{color: PALETTE.textMuted}}>
+                        <li>Summary of Total Deductions by Category</li>
+                        <li>Detailed Property Depreciation Schedules (MACRS + Bonus)</li>
+                        <li>Vehicle Expense Logs (Standard Mileage vs. Actual)</li>
+                        <li>Home Office Deduction Calculation Worksheet</li>
+                        <li>REP Status Hours Log & Qualification Summary</li>
+                        <li>Supporting Documentation Checklist</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Notebook ---
+const Notebook = ({ userId, showMessage }) => {
+    const [notes, setNotes] = useState([]);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [currentNote, setCurrentNote] = useState({ id: null, title: '', content: '', propertyId: '', date: new Date().toISOString().split('T')[0] });
+    const [properties, setProperties] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [formLoading, setFormLoading] = useState(false);
+
+    useEffect(() => {
+        if (!userId || !db) return;
+        setLoading(true);
+        const propsQuery = query(collection(db, `artifacts/${appId}/users/${userId}/properties`));
+        const unsubProps = onSnapshot(propsQuery, (snapshot) => setProperties(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))), (err) => { console.error(err); showMessage("Error loading properties for notebook.", "error"); });
+        const notesQuery = query(collection(db, `artifacts/${appId}/users/${userId}/notebookEntries`));
+        const unsubNotes = onSnapshot(notesQuery, (snapshot) => {
+            const fetchedNotes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            fetchedNotes.sort((a,b) => (b.date?.toDate ? b.date.toDate() : new Date(b.date)) - (a.date?.toDate ? a.date.toDate() : new Date(a.date)));
+            setNotes(fetchedNotes); setLoading(false);
+        }, (err) => { console.error(err); showMessage("Error loading notes.", "error"); setLoading(false); });
+        return () => { unsubProps(); unsubNotes(); };
+    }, [userId, showMessage]);
+
+    const handleInputChange = (e) => { const { name, value } = e.target; setCurrentNote(prev => ({ ...prev, [name]: value })); };
+    const openModal = (note = null) => {
+        if (note) setCurrentNote({ ...note, date: note.date?.toDate ? note.date.toDate().toISOString().split('T')[0] : (note.date || new Date().toISOString().split('T')[0]), });
+        else setCurrentNote({ id: null, title: '', content: '', propertyId: '', date: new Date().toISOString().split('T')[0] });
+        setIsModalOpen(true);
+    };
+    const closeModal = () => setIsModalOpen(false);
+    const handleSubmitNote = async (e) => {
+        e.preventDefault();
+        if (!userId || !db) { showMessage("Not authenticated.", "error"); return; }
+        if (!currentNote.title || !currentNote.content) { showMessage("Title and content are required for a note.", "error"); return; }
+        setFormLoading(true);
+        const noteData = { ...currentNote, date: new Date(currentNote.date), lastUpdatedAt: serverTimestamp() };
+        delete noteData.id;
+        try {
+            if (currentNote.id) {
+                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/notebookEntries`, currentNote.id), noteData);
+                showMessage("Note updated successfully!", "success");
+            } else {
+                noteData.createdAt = serverTimestamp();
+                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/notebookEntries`), noteData);
+                showMessage("Note added successfully!", "success");
+            }
+            closeModal();
+        } catch (error) { console.error(error); showMessage(`Error saving note: ${error.message}`, "error"); }
+        setFormLoading(false);
+    };
+    const handleDeleteNote = async (noteId) => {
+        if (!userId || !db || !noteId) return;
+        // Placeholder for custom modal confirmation
+        if (window.confirm("Are you sure you want to delete this note?")) {
+            setFormLoading(true);
+            try {
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/notebookEntries`, noteId));
+                showMessage("Note deleted successfully.", "success");
+            } catch (error) { console.error(error); showMessage("Error deleting note.", "error"); }
+            setFormLoading(false);
+        }
+    };
+    
+    if (loading) return <div className="p-6"><LoadingSpinner size="lg" /></div>;
+
+    return (
+        <div className="p-6 space-y-6">
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold flex items-center" style={{ color: PALETTE.textPrimary }}><BookOpen className="mr-3" style={{color: PALETTE.accentPurple}} />Notebook</h1>
+                <Button onClick={() => openModal()} iconLeft={<PlusCircle />}>Add Note</Button>
+            </div>
+            {notes.length === 0 ? (
+                 <p className="p-8 rounded-xl shadow text-center" style={{ backgroundColor: PALETTE.cardBg, color: PALETTE.textMuted }}>No notes yet. Add property-specific decisions, receipt details, or strategy logs.</p>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {notes.map(note => (
+                        <div key={note.id} className="p-5 rounded-xl shadow-lg hover:shadow-xl transition-shadow flex flex-col justify-between" style={{backgroundColor: PALETTE.cardBg}}>
+                            <div>
+                                <h3 className="text-lg font-semibold mb-1" style={{color: PALETTE.textPrimary}}>{note.title}</h3>
+                                <p className="text-xs mb-2" style={{color: PALETTE.textMuted}}>
+                                    {formatDate(note.date)} 
+                                    {note.propertyId && properties.find(p=>p.id === note.propertyId) ? ` - ${properties.find(p=>p.id === note.propertyId).name}` : ''}
+                                </p>
+                                <p className="text-sm whitespace-pre-wrap line-clamp-4" style={{color: PALETTE.textSecondary}}>{note.content}</p>
+                            </div>
+                            <div className="mt-4 pt-3 border-t flex justify-end space-x-2" style={{borderColor: PALETTE.divider}}>
+                                <Button onClick={() => openModal(note)} variant="ghost" size="sm" className="p-1" iconLeft={<Edit3 size={16}/>} />
+                                <Button onClick={() => handleDeleteNote(note.id)} variant="ghost" size="sm" className="p-1" iconLeft={<Trash2 size={16} style={{color: PALETTE.chartRed}}/>} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+            <Modal isOpen={isModalOpen} onClose={closeModal} title={currentNote.id ? "Edit Note" : "Add New Note"}>
+                <form onSubmit={handleSubmitNote} className="space-y-4">
+                    <Input label="Date" id="date" type="date" value={currentNote.date} onChange={handleInputChange} required />
+                    <Input label="Title" id="title" value={currentNote.title} onChange={handleInputChange} placeholder="e.g., Decision on Roof Repair" required />
+                    <Textarea label="Content" id="content" value={currentNote.content} onChange={handleInputChange} rows={5} placeholder="Log property-specific decisions, receipt details, or strategic notes..." required />
+                    <Select label="Related Property (Optional)" id="propertyId" value={currentNote.propertyId} onChange={handleInputChange} options={[{value: '', label: 'General/None'}, ...properties.map(p => ({ value: p.id, label: p.name }))]} />
+                    <div className="flex justify-end space-x-3 pt-3 border-t" style={{borderColor: PALETTE.divider}}>
+                        <Button type="button" variant="secondary" onClick={closeModal} disabled={formLoading}>Cancel</Button>
+                        <Button type="submit" disabled={formLoading} iconLeft={formLoading ? <LoadingSpinner size="sm"/> : <Save />}>
+                            {formLoading ? 'Saving...' : (currentNote.id ? 'Update Note' : 'Add Note')}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+        </div>
+    );
+};
+
+// --- Main App Component ---
+const App = () => {
+    const [activePage, setActivePage] = useState('Dashboard');
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [currentUser, setCurrentUser] = useState(null);
+    const [authLoading, setAuthLoading] = useState(true);
+    const [userId, setUserId] = useState(null);
+    const [propertyToEdit, setPropertyToEdit] = useState(null);
+    const [message, setMessage] = useState({ text: '', type: '' });
+
+    useEffect(() => {
+        if (!auth) { console.error("Firebase Auth is not initialized."); setAuthLoading(false); return; }
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) { setCurrentUser(user); setUserId(user.uid); console.log("User is signed in:", user.uid); } 
+            else {
+                console.log("User is signed out or token not yet available. Attempting sign-in.");
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) { await signInWithCustomToken(auth, __initial_auth_token); } 
+                    else { await signInAnonymously(auth); }
+                } catch (error) { console.error("Error during sign-in:", error); showMessage(`Authentication Error: ${error.message}`, "error"); }
+            }
+            setAuthLoading(false);
+        });
+        return () => unsubscribe();
+    }, []);
+
+    const clearPropertyToEdit = () => setPropertyToEdit(null);
+    const showMessage = (text, type, duration = 4000) => { setMessage({ text, type }); setTimeout(() => setMessage({ text: '', type: '' }), duration); };
+
+    const navItems = [
+        { name: 'Dashboard', icon: <Home />, page: 'Dashboard' }, { name: 'Properties', icon: <Building />, page: 'PropertyList' },
+        { name: 'Expense Log', icon: <Receipt />, page: 'ExpenseLog' }, { name: 'Vehicle & Office', icon: <Car />, page: 'VehicleAndOffice' },
+        { name: 'REP Tracker', icon: <Target />, page: 'REPTracker' }, { name: 'IRS Audit Shield', icon: <Shield />, page: 'IRSAuditShield' },
+        { name: 'Reports', icon: <FileSpreadsheet />, page: 'Reports' }, { name: 'Notebook', icon: <BookOpen />, page: 'Notebook' },
+    ];
+
+    const renderPage = () => {
+        if (authLoading || !userId) { return <div className="flex items-center justify-center h-screen" style={{backgroundColor: PALETTE.mainBg}}><LoadingSpinner size="lg" /> <p className="ml-4 text-lg" style={{color: PALETTE.textPrimary}}>Initializing WriteOffMaster...</p></div>; }
+        switch (activePage) {
+            case 'Dashboard': return <Dashboard userId={userId} setActivePage={setActivePage} showMessage={showMessage} />;
+            case 'AddProperty': return <AddProperty userId={userId} showMessage={showMessage} setActivePage={setActivePage} propertyToEdit={propertyToEdit} clearPropertyToEdit={clearPropertyToEdit} />;
+            case 'PropertyList': return <PropertyList userId={userId} showMessage={showMessage} setActivePage={setActivePage} setPropertyToEdit={setPropertyToEdit} />;
+            case 'ExpenseLog': return <ExpenseLog userId={userId} showMessage={showMessage} setActivePage={setActivePage} />;
+            case 'VehicleAndOffice': return <VehicleAndOffice userId={userId} showMessage={showMessage} />;
+            case 'REPTracker': return <REPTracker userId={userId} showMessage={showMessage} />;
+            case 'IRSAuditShield': return <IRSAuditShield userId={userId} showMessage={showMessage} />;
+            case 'Reports': return <Reports showMessage={showMessage} />;
+            case 'Notebook': return <Notebook userId={userId} showMessage={showMessage} />;
+            default: return <Dashboard userId={userId} setActivePage={setActivePage} showMessage={showMessage} />;
+        }
+    };
+    
+    if (!db || !auth) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen p-4 text-center" style={{backgroundColor: PALETTE.mainBg}}>
+            <AlertTriangle size={48} className="mb-4" style={{color: PALETTE.chartRed}} />
+            <h1 className="text-2xl font-bold mb-2" style={{color: PALETTE.textPrimary}}>Initialization Error</h1>
+            <p style={{color: PALETTE.textSecondary}}>Could not connect to the necessary services. Please ensure Firebase is configured correctly.</p>
+            <p className="text-xs mt-4" style={{color: PALETTE.textMuted}}>If you are the developer, check the console for specific Firebase initialization errors.</p>
+        </div>
+      );
+    }
+
+    return (
+        <div className="flex h-screen font-inter" style={{backgroundColor: PALETTE.mainBg}}>
+            <aside 
+                className={`text-white transition-all duration-300 ease-in-out ${isSidebarOpen ? 'w-64' : 'w-20'} flex flex-col fixed inset-y-0 left-0 z-30`}
+                style={{backgroundColor: PALETTE.cardBg /* Sidebar now uses cardBg for distinct look */}}
+            >
+                <div className={`flex items-center ${isSidebarOpen ? 'p-4 justify-between' : 'p-4 justify-center'} h-16`} style={{borderBottom: `1px solid ${PALETTE.divider}`}}>
+                    {isSidebarOpen && <span className="text-xl font-semibold" style={{color: PALETTE.textPrimary}}>WriteOffMaster</span>}
+                    <button 
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                        className="p-1 rounded-md focus:outline-none focus:ring-2"
+                        style={{color: PALETTE.textSecondary, '--tw-ring-color': PALETTE.accentPurple}}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = PALETTE.sidebarHover}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                        {isSidebarOpen ? <Minimize size={20} /> : <Maximize size={20} />}
+                    </button>
+                </div>
+                <nav className="flex-grow p-2 space-y-1 overflow-y-auto">
+                    {navItems.map(item => (
+                        <button
+                            key={item.name}
+                            onClick={() => { setActivePage(item.page); if (item.page !== 'AddProperty') clearPropertyToEdit(); }}
+                            title={item.name}
+                            className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors duration-200 ${!isSidebarOpen ? 'justify-center' : ''}`}
+                            style={{
+                                backgroundColor: activePage === item.page ? PALETTE.accentPurple : 'transparent',
+                                color: activePage === item.page ? PALETTE.textPrimary : PALETTE.textSecondary,
+                            }}
+                            onMouseEnter={e => { if(activePage !== item.page) e.currentTarget.style.backgroundColor = PALETTE.sidebarHover; if(activePage !== item.page) e.currentTarget.style.color = PALETTE.accentPurple; }}
+                            onMouseLeave={e => { if(activePage !== item.page) e.currentTarget.style.backgroundColor = 'transparent'; if(activePage !== item.page) e.currentTarget.style.color = PALETTE.textSecondary;}}
+                        >
+                            {React.cloneElement(item.icon, { className: "w-6 h-6" })}
+                            {isSidebarOpen && <span className="font-medium">{item.name}</span>}
+                        </button>
+                    ))}
+                </nav>
+                <div className="p-4" style={{borderTop: `1px solid ${PALETTE.divider}`}}>
+                    {isSidebarOpen && userId && (
+                        <div className="text-xs mb-2 truncate" title={userId} style={{color: PALETTE.textMuted}}>
+                            User ID: {userId}
+                        </div>
+                    )}
+                     {isSidebarOpen && currentUser && (
+                        <div className="flex items-center space-x-2">
+                            <UserCircle size={24} style={{color: PALETTE.accentPurple}} />
+                            <span className="text-sm" style={{color: PALETTE.textSecondary}}>{currentUser.isAnonymous ? "Guest User" : (currentUser.displayName || currentUser.email || "Authenticated User")}</span>
+                        </div>
+                    )}
+                    {!isSidebarOpen && <UserCircle size={28} className="mx-auto" style={{color: PALETTE.accentPurple}} title={userId || "User"} />}
+                </div>
+            </aside>
+
+            <main className={`flex-1 transition-all duration-300 ease-in-out overflow-y-auto ${isSidebarOpen ? 'ml-64' : 'ml-20'}`}>
+                {renderPage()}
+            </main>
+
+            {message.text && (
+                <div className={`fixed bottom-5 right-5 p-4 rounded-lg shadow-xl text-white
+                    transition-opacity duration-300 ${message.text ? 'opacity-100' : 'opacity-0'}`}
+                    style={{backgroundColor: message.type === 'success' ? PALETTE.chartGreen : message.type === 'error' ? PALETTE.chartRed : PALETTE.accentPurple}}
+                >
+                    {message.text}
+                </div>
+            )}
+            
+            <style jsx global>{`
+                body {
+                    background-color: ${PALETTE.mainBg}; /* Ensure body matches for scrollbar consistency */
+                }
+                .font-inter { font-family: 'Inter', sans-serif; }
+                ::-webkit-scrollbar {
+                    width: 8px;
+                    height: 8px;
+                }
+                ::-webkit-scrollbar-track {
+                    background: ${PALETTE.mainBg};
+                    border-radius: 10px;
+                }
+                ::-webkit-scrollbar-thumb {
+                    background: ${PALETTE.divider}; 
+                    border-radius: 10px;
+                }
+                ::-webkit-scrollbar-thumb:hover {
+                    background: ${PALETTE.accentPurple}; 
+                }
+                /* Fix for select dropdown options in dark mode */
+                select option {
+                    background-color: ${PALETTE.cardBg};
+                    color: ${PALETTE.textPrimary};
+                }
+                /* Ensure date picker icon is visible in dark mode if it's default browser styled */
+                input[type="date"]::-webkit-calendar-picker-indicator {
+                    filter: invert(1); /* Basic invert, might need more specific styling */
+                }
+            `}</style>
+        </div>
+    );
+};
+
+export default App;
+
